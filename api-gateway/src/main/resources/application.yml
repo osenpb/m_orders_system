@@ -1,0 +1,13 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: "optional:configserver:http://localhost:8888"
+  # cloud:
+  #   config:
+  #     # Esto hace que el microservicio espere a que el Config Server responda
+  #     # antes de intentar cargar la seguridad.
+  #     fail-fast: true
