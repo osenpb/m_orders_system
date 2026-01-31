@@ -1,27 +1,3 @@
-# resilience4j:
-#   circuitbreaker:
-#     configs:
-#       default:
-#         registerHealthIndicator: true
-#         slidingWindowSize: 10
-#         permittedNumberOfCallsInHalfOpenState: 3
-#         slidingWindowType: COUNT_BASED
-#         minimumNumberOfCalls: 5
-#         waitDurationInOpenState: 5s
-#         failureRateThreshold: 50
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health, info, circuitbreakers # Expone el estado del CB
-  endpoint:
-    health:
-      show-details: always
-
-logging:
-  level:
-    io.github.resilience4j: DEBUG
 
 spring:
   application:
