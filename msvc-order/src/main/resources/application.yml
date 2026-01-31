@@ -1,7 +1,7 @@
 resilience4j:
   circuitbreaker:
-    instances:
-      productCB:
+    configs:
+      default:
         registerHealthIndicator: true
         slidingWindowSize: 10
         permittedNumberOfCallsInHalfOpenState: 3

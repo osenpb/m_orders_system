@@ -1,20 +1,20 @@
 server:
-  port: 8761
+  port: ${SERVER_PORT:8761}
 
 eureka:
   instance:
-    hostname: localhost
+    hostname: ${EUREKA_INSTANCE_HOSTNAME:localhost}
   client:
-    # Le decimos al servidor que no intente registrarse en otro servidor
+    # Que el servidor no intente registrarse en otro servidor
     register-with-eureka: false 
-    # Le decimos que no intente buscar otros servicios (él es el dueño de la lista)
+    # Que no intente buscar otros servicios (él es el dueño de la lista)
     fetch-registry: false 
     service-url:
       defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
 
 spring:
   application:
-    name: eureka-server
+    name: ${SPRING_APPLICATION_NAME:eureka-server}
   output:
     ansi:
       enabled: ALWAYS
