@@ -1,33 +1,25 @@
-HELP.md
+# --- JAVA & MAVEN ---
 target/
-.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.properties
 
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-
-### IntelliJ IDEA ###
-.idea
-*.iws
+# --- IDEs (IntelliJ & VS Code) ---
+.idea/
 *.iml
-*.ipr
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
 .vscode/
+.settings/
+.classpath
+.project
+bin/
+
+# --- CONFIGURACIÓN Y SECRETOS ---
+.env
+*.log
+application-local.yml
+/config/*.yml  # OPCIONAL: Si quieres que solo el Config Server use las configs locales
+
+# --- SISTEMA OPERATIVO ---
+.DS_Store
+Thumbs.db
