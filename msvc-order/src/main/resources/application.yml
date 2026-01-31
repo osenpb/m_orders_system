@@ -1,16 +1,14 @@
-resilience4j:
-  circuitbreaker:
-    configs:
-      default:
-        registerHealthIndicator: true
-        slidingWindowSize: 10
-        permittedNumberOfCallsInHalfOpenState: 3
-        slidingWindowType: COUNT_BASED
-        minimumNumberOfCalls: 5
-        waitDurationInOpenState: 5s
-        failureRateThreshold: 50
-
-
+# resilience4j:
+#   circuitbreaker:
+#     configs:
+#       default:
+#         registerHealthIndicator: true
+#         slidingWindowSize: 10
+#         permittedNumberOfCallsInHalfOpenState: 3
+#         slidingWindowType: COUNT_BASED
+#         minimumNumberOfCalls: 5
+#         waitDurationInOpenState: 5s
+#         failureRateThreshold: 50
 
 management:
   endpoints:
@@ -33,8 +31,3 @@ spring:
       enabled: ALWAYS  
   config:
     import: "optional:configserver:http://localhost:8888"
-  # cloud:
-  #   config:
-  #     # Esto hace que el microservicio espere a que el Config Server responda
-  #     # antes de intentar cargar la seguridad.
-  #     fail-fast: true

@@ -6,8 +6,3 @@ spring:
     name: ${SPRING_APPLICATION_NAME:api-gateway}
   config:
     import: "${SPRING_CONFIG_IMPORT:optional:configserver:http://localhost:8888}"
-  # cloud:
-  #   config:
-  #     # Esto hace que el microservicio espere a que el Config Server responda
-  #     # antes de intentar cargar la seguridad.
-  #     fail-fast: true
