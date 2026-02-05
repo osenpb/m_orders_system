@@ -1,34 +1,22 @@
 services:
-  # --- BASES DE DATOS ---
   postgres-keycloak:
     image: postgres:16
     container_name: keycloak-db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: ${DB_PASSWORD_KEYCLOAK} 
+      POSTGRES_PASSWORD: ${DB_PASSWORD_KEYCLOAK}
     ports:
-      - "5433:5432" # otro puerto para no chocar con el del localhost
+      - "5433:5432"
 
-  mysql-business:
-    image: mysql:8.0
-    container_name: mysql-db
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: order_db
-    ports:
-      - "3306:3306"
-
-  # --- INFRAESTRUCTURA DE SEGURIDAD ---
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: keycloak-dev
-    command: start-dev
+    # El comando --import-realm busca archivos en /opt/keycloak/data/import
+    command: ["start-dev", "--import-realm"]
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak # Nombre del servicio de arriba
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${DB_PASSWORD_KEYCLOAK}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
@@ -37,73 +25,8 @@ services:
       KC_HOSTNAME_STRICT: "false"
     ports:
       - "7080:8080"
+    volumes:
+      # Mapeamos tu carpeta local donde está el JSON al contenedor
+      - ./keycloak-config:/opt/keycloak/data/import
     depends_on:
       - postgres-keycloak
-
-  # --- MICROSERVICIOS CORE ---
-  eureka-server:
-    build: ./eureka-server
-    container_name: eureka-server
-    ports:
-      - "8761:8761"
-
-  config-server:
-    build: ./config-server
-    container_name: config-server
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./config:/app/config
-    environment:
-      - SPRING_PROFILES_ACTIVE=native,docker
-      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
-
-  api-gateway:
-    build: ./api-gateway
-    container_name: api-gateway
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
-      - SPRING_CLOUD_CONFIG_FAIL_FAST=true
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=20
-      - SPRING_CLOUD_CONFIG_RETRY_INITIAL_INTERVAL=2000
-      - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=10000
-    depends_on:
-      - config-server
-      - eureka-server
-
-  msvc-product:
-    build: ./msvc-product
-    container_name: msvc-product
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
-      - SPRING_CLOUD_CONFIG_FAIL_FAST=true
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=20
-      - SPRING_CLOUD_CONFIG_RETRY_INITIAL_INTERVAL=2000
-      - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=10000
-    depends_on:
-      - config-server
-      - eureka-server
-      - mysql-business
-
-  msvc-order:
-    build: ./msvc-order
-    container_name: msvc-order
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
-      - SPRING_CLOUD_CONFIG_FAIL_FAST=true
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=20
-      - SPRING_CLOUD_CONFIG_RETRY_INITIAL_INTERVAL=2000
-      - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
-      - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=10000
-    depends_on:
-      - config-server
-      - eureka-server
-      - mysql-business
-    
-volumes:
-  postgres_data:

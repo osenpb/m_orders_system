@@ -1,18 +1,27 @@
 spring:
   application:
     name: config-server
+  profiles:
+    active: git
+  jmx:
+    enabled: false
+  
   cloud:
     config:
       server:
         git:
           uri: https://github.com/osenpb/config-server-order-system.git
+          default-label: main
+          clone-on-start: true
+          timeout: 10
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: always
 
-  output:
-    ansi:
-      enabled: ALWAYS
 server:
   port: 8888
-
-#   profiles:
-#     active:
-#     - native

@@ -1,0 +1,46 @@
+{
+  "realm": "order-system",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "api-gateway-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "zUcCDu9kNswZAUMaCuaPIS3J2PPkaQOE",
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://api-gateway:8080/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "email": "test@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "test123"
+        }
+      ],
+      "realmRoles": ["user"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user"
+      },
+      {
+        "name": "admin"
+      }
+    ]
+  }
+}

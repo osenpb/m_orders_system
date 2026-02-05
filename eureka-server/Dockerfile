@@ -12,6 +12,9 @@ RUN mvn clean package -DskipTests
 # Stage 2: Runtime
 FROM eclipse-temurin:21-jre-alpine
 
+# Install curl for healthcheck
+RUN apk add --no-cache curl
+
 # Crear un usuario de sistema para no ejecutar como root
 RUN addgroup -S spring && adduser -S spring -G spring
 USER spring:spring
