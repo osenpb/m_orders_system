@@ -2,8 +2,6 @@ server:
   port: ${SERVER_PORT:8081}
 
 spring:
-  jmx:
-    enabled: false
   application:
     name: ${SPRING_APPLICATION_NAME:msvc-product}
   config:

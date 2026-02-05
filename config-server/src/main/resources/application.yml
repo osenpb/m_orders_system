@@ -3,9 +3,6 @@ spring:
     name: config-server
   profiles:
     active: git
-  jmx:
-    enabled: false
-  
   cloud:
     config:
       server:
@@ -14,6 +11,11 @@ spring:
           default-label: main
           clone-on-start: true
           timeout: 10
+
+  output:
+    ansi:
+      enabled: ALWAYS
+
 management:
   endpoints:
     web:

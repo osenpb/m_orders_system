@@ -13,8 +13,6 @@ eureka:
       defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
 
 spring:
-  jmx:
-    enabled: false
   application:
     name: ${SPRING_APPLICATION_NAME:eureka-server}
   output:

@@ -1,9 +1,8 @@
-server:
+
+server:
   port: ${SERVER_PORT:8082}
 
 spring:
-  jmx:
-    enabled: false
   application:
     name: msvc-order
   output:
