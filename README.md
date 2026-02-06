@@ -2,6 +2,8 @@
 
 A distributed microservices architecture for managing products and orders, built with Spring Boot, Spring Cloud, and following best practices for cloud-native applications.
 
+**Note:** At the moment, the `docker-compose` configuration provisions only Keycloak and Zipkin services.
+
 ## Architecture
 
 This system implements a microservices architecture with the following components:
@@ -378,10 +380,4 @@ orders_system/
 5. Add route in API Gateway
 6. Start service after Eureka and Config Server
 
-## License
 
-This project is created for educational purposes.
-
-## Contact
-
-For questions or issues, please open an issue in the repository.
