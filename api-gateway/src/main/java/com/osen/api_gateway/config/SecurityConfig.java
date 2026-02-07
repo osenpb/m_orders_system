@@ -18,9 +18,9 @@ public class SecurityConfig {
                 .pathMatchers("/public/**").permitAll()
                 .anyExchange().authenticated()           // Todo lo demás requiere login
             )
-            .oauth2Login(Customizer.withDefaults())      // Habilita OAuth2
+            .oauth2Login(Customizer.withDefaults())      // Habilita OAuth2 para navegador
             .oauth2Client(Customizer.withDefaults())     // Permite al Gateway actuar como cliente
-            //.csrf(ServerHttpSecurity.CsrfSpec::disable); // Desactivar CSRF para pruebas (en prod se evalúa)
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults())) // Acepta Bearer tokens
             .csrf(csrf-> csrf.disable());
         return http.build();
     }
