@@ -17,6 +17,10 @@ public interface OrderService {
 
     void deleteById(Long id);
 
+    Optional<Order> update(Long id, List<OrderItem> items);
+
+    boolean existsById(Long id);
+
     ProductDTO getProductById(Long productId);
 
     Order createNewOrder(String userId, List<OrderItem> items);

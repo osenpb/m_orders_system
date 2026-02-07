@@ -8,14 +8,15 @@ import org.springframework.stereotype.Service;
 import com.osen.msvc_product.entity.Product;
 import com.osen.msvc_product.repository.ProductRepository;
 
-import lombok.RequiredArgsConstructor;
-
 @Service
-@RequiredArgsConstructor
 public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
-    
+
+    public ProductServiceImpl(ProductRepository productRepository) {
+        this.productRepository = productRepository;
+    }
+
     @Override
     public List<Product> findAll() {
         return productRepository.findAll();
@@ -45,4 +46,3 @@ public class ProductServiceImpl implements ProductService {
         productRepository.deleteById(productId);
     }
 }
-

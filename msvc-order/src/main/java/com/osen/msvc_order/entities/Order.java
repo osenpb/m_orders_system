@@ -13,15 +13,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
 
-@Setter
-@Getter
-@NoArgsConstructor
-@AllArgsConstructor
 @Entity
 @Table(name = "orders")
 public class Order {
@@ -37,6 +29,48 @@ public class Order {
     @JoinColumn(name = "order_id")
     private List<OrderItem> items = new ArrayList<>();
 
+    public Order() {
+    }
+
+    public Order(Long id, String userId, double total, List<OrderItem> items) {
+        this.id = id;
+        this.userId = userId;
+        this.total = total;
+        this.items = items != null ? items : new ArrayList<>();
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public double getTotal() {
+        return total;
+    }
+
+    public void setTotal(double total) {
+        this.total = total;
+    }
+
+    public List<OrderItem> getItems() {
+        return items;
+    }
+
+    public void setItems(List<OrderItem> items) {
+        this.items = items;
+    }
+
     @PrePersist
     @PreUpdate
     public void calculateTotal() {
@@ -47,7 +81,7 @@ public class Order {
     
     public void addItem(OrderItem item) {
         this.items.add(item);
-        item.setOrder(this); // Aquí se establece la relación bidireccional automáticamente
+        item.setOrder(this);
     }
 
 }

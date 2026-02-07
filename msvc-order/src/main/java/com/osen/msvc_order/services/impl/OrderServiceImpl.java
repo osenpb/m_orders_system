@@ -1,6 +1,5 @@
 package com.osen.msvc_order.services.impl;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -17,15 +16,19 @@ import com.osen.msvc_order.services.OrderItemService;
 import com.osen.msvc_order.services.OrderService;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import lombok.RequiredArgsConstructor;
 
 @Service
-@RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
     private final OrderItemService orderItemService;
     private final ProductClient productClient;
+
+    public OrderServiceImpl(OrderRepository orderRepository, OrderItemService orderItemService, ProductClient productClient) {
+        this.orderRepository = orderRepository;
+        this.orderItemService = orderItemService;
+        this.productClient = productClient;
+    }
 
     @Override
     public List<Order> findAll() {
@@ -43,8 +46,29 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional
     public void deleteById(Long id) {
         orderRepository.deleteById(id);
+    }
+
+    @Override
+    @Transactional
+    public Optional<Order> update(Long id, List<OrderItem> items) {
+        Optional<Order> optOrder = orderRepository.findById(id);
+        if (optOrder.isPresent()) {
+            Order order = optOrder.get();
+            order.getItems().clear();
+            if (items != null) {
+                items.forEach(order::addItem);
+            }
+            return Optional.of(orderRepository.save(order));
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean existsById(Long id) {
+        return orderRepository.existsById(id);
     }
 
     @Override
@@ -53,7 +77,6 @@ public class OrderServiceImpl implements OrderService {
         return productClient.getProductById(productId);
     }
 
-    // El método fallback DEBE tener la misma firma y recibir la excepción
     private ProductDTO fallBackGetProduct(Long productId, Throwable e) {
         return new ProductDTO(productId, "Producto no disponible (Servicio en mantenimiento)", 0, 0.0);
     }
