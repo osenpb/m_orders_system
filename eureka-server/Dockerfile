@@ -27,4 +27,4 @@ COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8761
 
 # Ajustar límites de memoria para tu laptop (256MB es ideal para Eureka)
-ENTRYPOINT ["java", "-Xmx256m", "-Xms128m", "-jar", "app.jar"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app.jar"]

@@ -37,5 +37,55 @@ services:
     ports:
       - "9411:9411"
 
+  config-server: 
+    build: ./config-server
+    container_name: config-server
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx64m
+    ports:
+      - "8888:8888"
+    depends_on:
+      - keycloak
+
+  eureka-server:
+    build: ./eureka-server
+    container_name: eureka-server
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx64m 
+    ports:
+      - "8761:8761"
+    depends_on:
+      - config-server
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx64m
+    ports:
+      - "8080:8080"
+    depends_on:
+      - config-server
+      - eureka-server
+  msvc-product:
+    build: ./msvc-product
+    container_name: msvc-product
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx64m
+    ports:
+      - "8081:8081"
+    depends_on:
+      - config-server
+      - eureka-server
+  msvc-order:
+    build: ./msvc-order
+    container_name: msvc-order
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx64m
+    ports:
+      - "8082:8082"
+    depends_on:
+      - config-server
+      - eureka-server
 volumes:
   keycloak_pgdata:
