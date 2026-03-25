@@ -37,16 +37,17 @@ services:
     ports:
       - "9411:9411"
 
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
+  postgres:
+    image: postgres:16
+    container_name: postgres
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:mysql}
-      MYSQL_DATABASE: orders_system
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: ${DB_PASSWORD:mysql}
+      POSTGRES_DB: orders_system
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
 
   config-server: 
     build: ./config-server
@@ -84,27 +85,27 @@ services:
     environment:
       - JAVA_OPTS=-Xms32m -Xmx64m
       - SPRING_PROFILES_ACTIVE=docker
-      - DB_HOST=mysql
+      - DB_HOST=postgres
     ports:
       - "8081:8081"
     depends_on:
       - config-server
       - eureka-server
-      - mysql
+      - postgres
   msvc-order:
     build: ./msvc-order
     container_name: msvc-order
     environment:
       - JAVA_OPTS=-Xms32m -Xmx64m
       - SPRING_PROFILES_ACTIVE=docker
-      - DB_HOST=mysql
+      - DB_HOST=postgres
     ports:
       - "8082:8082"
     depends_on:
       - config-server
       - eureka-server
-      - mysql
+      - postgres
 
 volumes:
   keycloak_pgdata:
-  mysql_data:
+  postgres_data:
