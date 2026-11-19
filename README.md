@@ -354,16 +354,25 @@ msvc-order ◀── Kafka [stock-events] ◀── OutboxPublisher ◀───
 - **Compensación**: `StockRejected` deshace lo que `order` ya había hecho (el pedido pendiente pasa a `REJECTED`). La compensación es un evento de negocio, no un rollback de BD.
 - **Inbox** también en `order`, para que el cambio de estado sea idempotente.
 
+### Fallos al consumir: Retry con backoff + Dead Letter Queue
+
+Ambos servicios (`KafkaErrorHandlingConfig`) tratan igual los errores de sus listeners:
+
+- **Retry con backoff exponencial**: ante un fallo transitorio (BD caída, timeout) se reintenta 4 veces, esperando 1 s, 2 s, 4 s y 8 s. Reintentar es seguro porque el consumidor es idempotente (inbox).
+- **Dead Letter Topic**: si se agotan los reintentos, el mensaje se publica en `order-events.DLT` (lo consume `product`) o `stock-events.DLT` (lo consume `order`) y el consumo continúa. Así **un mensaje venenoso no bloquea la partición**. La causa del error viaja en las cabeceras `kafka_dlt-*`.
+- **Fallos no recuperables** (JSON inválido) van directo al DLT, sin reintentos: reintentar no los arregla.
+- `DeadLetterListener` solo deja constancia en el log; no reprocesa. Corregir y reenviar es una decisión humana.
+
 ### Garantías y límites actuales
 
 - Entrega **al menos una vez** + consumidores idempotentes = efecto **exactamente una vez** sobre el stock y el estado del pedido.
 - `OutboxPublisher` está pensado para **una sola instancia** de cada servicio (con varias réplicas habría que bloquear el lote, p. ej. `FOR UPDATE SKIP LOCKED`).
-- Un mensaje que no se pueda deserializar se reintenta y luego se descarta: aún no hay DLQ.
+- El outbox no se purga: los eventos publicados se quedan en la tabla.
+- Las tablas se crean con `ddl-auto: update`, no con migraciones (Flyway).
 
 ### Pendiente (según el plan)
 
 - `msvc-payment` (`StockReserved → PaymentCompleted | PaymentFailed`) y compensaciones encadenadas (liberar stock si el pago falla).
-- **Dead Letter Queue** y reintentos con *backoff*.
 - Sustituir el polling por **CDC con Debezium** y comparar con **orquestación**.
 
 ## Project Structure
