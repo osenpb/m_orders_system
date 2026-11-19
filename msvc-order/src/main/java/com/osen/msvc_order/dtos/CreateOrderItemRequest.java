@@ -10,9 +10,6 @@ public record CreateOrderItemRequest(
 
     @NotNull(message = "La cantidad es obligatoria")
     @Min(value = 1, message = "La cantidad debe ser al menos 1")
-    Integer quantity,
-
-    @NotNull(message = "El precio es obligatorio")
-    Double price
+    Integer quantity
 ) {
 }

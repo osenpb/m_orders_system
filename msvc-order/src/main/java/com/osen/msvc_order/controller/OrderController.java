@@ -104,7 +104,6 @@ public class OrderController {
                 OrderItem item = new OrderItem();
                 item.setProductId(dto.productId());
                 item.setQuantity(dto.quantity());
-                item.setPrice(dto.price());
                 return item;
             })
             .collect(Collectors.toList());

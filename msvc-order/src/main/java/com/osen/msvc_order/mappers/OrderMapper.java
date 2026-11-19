@@ -9,6 +9,7 @@ public class OrderMapper {
         return new OrderDTO(
             order.getId(),
             order.getUserId(),
+            order.getStatus(),
             order.getTotal(),
             OrderItemMapper.toDTO(order.getItems())
         );
