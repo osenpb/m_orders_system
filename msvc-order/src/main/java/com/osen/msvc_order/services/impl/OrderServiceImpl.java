@@ -1,11 +1,18 @@
 package com.osen.msvc_order.services.impl;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.osen.msvc_order.events.OrderCreatedEvent;
+import com.osen.msvc_order.outbox.OutboxEvent;
+import com.osen.msvc_order.outbox.OutboxRepository;
 
 import com.osen.msvc_order.client.ProductGateway;
 import com.osen.msvc_order.dtos.ProductDTO;
@@ -22,13 +29,18 @@ public class OrderServiceImpl implements OrderService {
     private final OrderItemService orderItemService;
     private final ProductGateway productGateway;
     private final TransactionTemplate tx;
+    private final OutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemService orderItemService,
-            ProductGateway productGateway, PlatformTransactionManager transactionManager) {
+            ProductGateway productGateway, TransactionTemplate tx, OutboxRepository outboxRepository,
+            ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.orderItemService = orderItemService;
         this.productGateway = productGateway;
-        this.tx = new TransactionTemplate(transactionManager);
+        this.tx = tx;
+        this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -89,8 +101,25 @@ public class OrderServiceImpl implements OrderService {
             if (items != null) {
                 items.forEach(order::addItem);
             }
-            return orderRepository.save(order);
+            Order saved = orderRepository.save(order);
+            // misma transaccion: o se guardan pedido y evento, o ninguno
+            outboxRepository.save(toOutboxEvent(saved));
+            return saved;
         });
+    }
+
+    private OutboxEvent toOutboxEvent(Order order) {
+        UUID eventId = UUID.randomUUID();
+        OrderCreatedEvent event = new OrderCreatedEvent(eventId, order.getId(), order.getUserId(), Instant.now(),
+                order.getItems().stream()
+                        .map(i -> new OrderCreatedEvent.Item(i.getProductId(), i.getQuantity()))
+                        .toList());
+        try {
+            return new OutboxEvent(eventId, String.valueOf(order.getId()), OrderCreatedEvent.TYPE,
+                    objectMapper.writeValueAsString(event));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("No se pudo serializar OrderCreated", e);
+        }
     }
 
     /**
