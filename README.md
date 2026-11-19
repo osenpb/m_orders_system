@@ -2,7 +2,7 @@
 
 A distributed microservices architecture for managing products and orders, built with Spring Boot, Spring Cloud, and following best practices for cloud-native applications.
 
-**Note:** At the moment, the `docker-compose` configuration provisions only Keycloak and Zipkin services.
+**Note:** `docker-compose.yml` provisions the whole stack: Keycloak (with its own Postgres), Zipkin, PostgreSQL (`orders_db` and `products_db`), Kafka (single-node KRaft) and all the services. The goal of the project is to practice the **Outbox** and **SAGA** patterns (see [Patrones de diseño en el flujo del proyecto](#patrones-de-diseño-en-el-flujo-del-proyecto)).
 
 ## Architecture
 
@@ -72,7 +72,8 @@ Centralized configuration management:
 - **Spring Cloud Config**
 - **Spring Cloud OpenFeign**
 - **Spring Data JPA**
-- **MySQL**
+- **PostgreSQL**
+- **Apache Kafka** - Event messaging (Outbox + SAGA)
 - **Resilience4j** - Circuit breaker pattern
 - **Keycloak** - OAuth2/OIDC authentication
 - **Micrometer Tracing** - Distributed tracing with OpenTelemetry
@@ -87,7 +88,8 @@ Before running this application, ensure you have:
 
 - Java 21 installed
 - Maven 3.9+
-- MySQL 8.0+ running on localhost:3306
+- PostgreSQL 16 running on localhost:5432 (databases `orders_db` and `products_db`)
+- Kafka running on localhost:29092 (both are provided by `docker compose up postgres kafka`)
 - Keycloak server running on localhost:7080 (realm: order-system)
 - Zipkin server running on localhost:9411 (optional, for tracing)
 - Git (for config server)
@@ -96,15 +98,16 @@ Before running this application, ensure you have:
 
 ### Database Setup
 
-Create a MySQL database named `orders_system`:
+Each service owns its own database. With Docker, `docker compose up postgres` creates `orders_db` and, through `postgres-init/`, `products_db` (the init script only runs when the volume is empty). Without Docker:
 
 ```sql
-CREATE DATABASE orders_system;
+CREATE DATABASE orders_db;
+CREATE DATABASE products_db;
 ```
 
-Default credentials (can be configured in application properties):
-- Username: `root`
-- Password: `mysql`
+Default credentials (override with `DB_USER` / `DB_PASSWORD`):
+- Username: `postgres`
+- Password: `postgres`
 
 ### Keycloak Setup
 
@@ -304,6 +307,65 @@ The Order Service implements the Circuit Breaker pattern using Resilience4j:
 - Wait duration in open state: 5 seconds
 - Permitted calls in half-open state: 3
 
+## Patrones de diseño en el flujo del proyecto
+
+El proyecto sirve para practicar **outbox y SAGA**. Este es el recorrido de un pedido y el patrón que actúa en cada paso (resumen; los detalles están en el código).
+
+```
+Cliente ──▶ API Gateway ──▶ msvc-order ──Feign──▶ msvc-product      (validar producto y precio)
+                               │
+                               │ 1 transacción: Order(PENDING) + outbox_event(OrderCreated)
+                               ▼
+                         OutboxPublisher ──▶ Kafka [order-events] ──▶ msvc-product
+                                                                        │ 1 transacción: inbox + reserva de stock + outbox_event
+                                                                        ▼
+msvc-order ◀── Kafka [stock-events] ◀── OutboxPublisher ◀───── StockReserved | StockRejected
+   │
+   └─▶ Order: CONFIRMED  (StockReserved)   o   REJECTED  (StockRejected = compensación)
+```
+
+### Infraestructura (antes de que llegue el pedido)
+
+| Patrón | Dónde actúa | Para qué |
+|--------|-------------|----------|
+| **API Gateway + Token Relay** | `api-gateway` | Punto de entrada único: enruta y propaga el JWT de Keycloak a los servicios. |
+| **Service Discovery** | `eureka-server`, `@FeignClient(name = "msvc-product")` | `order` encuentra a `product` por nombre, sin IPs fijas. |
+| **Externalized Configuration** | `config-server` + repo `config` | La configuración (BD, Kafka, circuit breaker) vive fuera de los servicios, por perfil (`docker`). |
+| **Database per Service** | `orders_db` y `products_db` | Cada servicio es dueño de sus datos; solo se comunican por API o eventos. Sin esto la SAGA no tiene sentido. |
+
+### Paso 1 · Crear el pedido (`msvc-order`)
+
+- **Circuit Breaker** (`ProductGateway`, instancia `productCB`): protege la consulta síncrona a `product`. No hay *fallback* con datos inventados: si el producto no existe responde 422 (y no cuenta como fallo del breaker) y si `product` no responde, 503. El breaker vive en su propio bean para que pase por el proxy de Spring.
+- **Server-side pricing**: el precio se toma de `product`, nunca de la petición del cliente.
+- **Transactional Outbox** (`OutboxEvent`, `createNewOrder`): el pedido y el evento `OrderCreated` se guardan **en la misma transacción**. Resuelve el problema de "guardé en la BD pero no pude publicar en Kafka" (escritura doble). Nunca se publica directo a Kafka desde la lógica de negocio.
+- **Polling Publisher** (`OutboxPublisher`): un `@Scheduled` lee los eventos sin publicar, los envía y marca `publishedAt`. La clave del mensaje es el `orderId`, así que los eventos de un mismo pedido llegan en orden (misma partición). Si Kafka cae, el lote se corta y se reintenta sin desordenar.
+- **Estado como máquina simple**: el pedido nace `PENDING` y solo transiciona a `CONFIRMED` o `REJECTED` desde `PENDING`.
+
+### Paso 2 · Reservar stock (`msvc-product`)
+
+- **Idempotent Consumer / Inbox** (`processed_events`): Kafka entrega **al menos una vez**, así que el mismo evento puede llegar dos veces. El `eventId` se inserta en la inbox **en la misma transacción** que el descuento de stock; la clave primaria impide el duplicado.
+- **Atomic conditional update** (`ProductRepository.reserveStock`): `UPDATE ... SET stock = stock - :q WHERE stock >= :q`. Evita la carrera de leer-comprobar-escribir cuando dos reservas llegan a la vez.
+- **Todo o nada**: si un ítem del pedido no tiene stock, se revierte la transacción completa (incluidos los descuentos de los otros ítems) y se registra el rechazo.
+- **Transactional Outbox** también aquí: `StockReserved` / `StockRejected` se escriben en el outbox de `product` y los publica su propio `OutboxPublisher` en `stock-events`.
+
+### Paso 3 · Cerrar la SAGA (`msvc-order`)
+
+- **SAGA coreografiada** (`OrderSagaService`, `StockEventsListener`): no hay un orquestador central; cada servicio reacciona a eventos del otro. `StockReserved` confirma el pedido.
+- **Compensación**: `StockRejected` deshace lo que `order` ya había hecho (el pedido pendiente pasa a `REJECTED`). La compensación es un evento de negocio, no un rollback de BD.
+- **Inbox** también en `order`, para que el cambio de estado sea idempotente.
+
+### Garantías y límites actuales
+
+- Entrega **al menos una vez** + consumidores idempotentes = efecto **exactamente una vez** sobre el stock y el estado del pedido.
+- `OutboxPublisher` está pensado para **una sola instancia** de cada servicio (con varias réplicas habría que bloquear el lote, p. ej. `FOR UPDATE SKIP LOCKED`).
+- Un mensaje que no se pueda deserializar se reintenta y luego se descarta: aún no hay DLQ.
+
+### Pendiente (según el plan)
+
+- `msvc-payment` (`StockReserved → PaymentCompleted | PaymentFailed`) y compensaciones encadenadas (liberar stock si el pago falla).
+- **Dead Letter Queue** y reintentos con *backoff*.
+- Sustituir el polling por **CDC con Debezium** y comparar con **orquestación**.
+
 ## Project Structure
 
 ```
@@ -314,6 +376,7 @@ orders_system/
 ├── eureka-server/        # Service Discovery Server
 ├── msvc-order/          # Order Management Microservice
 ├── msvc-product/        # Product Management Microservice
+├── postgres-init/       # SQL run on first Postgres start (creates products_db)
 ├── .gitignore
 ├── .dockerignore
 └── README.md
@@ -330,7 +393,8 @@ orders_system/
 ### Order
 - `id` - Long (auto-generated)
 - `userId` - String
-- `total` - Double (auto-calculated)
+- `status` - `PENDING` (default), `CONFIRMED`, `REJECTED`, `CANCELLED`
+- `total` - Double (auto-calculated from prices taken from Product Service)
 - `items` - List<OrderItem>
 
 ### OrderItem
@@ -356,7 +420,7 @@ orders_system/
 - Review Config Server logs for errors
 
 **Database connection errors:**
-- Ensure MySQL is running
+- Ensure PostgreSQL is running and `orders_db` / `products_db` exist
 - Verify database credentials
 - Check database URL in configuration
 
