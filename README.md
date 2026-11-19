@@ -25,6 +25,7 @@ This system implements a microservices architecture with the following component
 | API Gateway | 8080 | API Gateway with OAuth2 |
 | Product Service | 8081 | Product Management Service |
 | Order Service | 8082 | Order Management Service |
+| Payment Service | 8083 | Payment (simulated), SAGA participant; no REST API |
 
 ### Microservices
 
@@ -319,10 +320,17 @@ Cliente ──▶ API Gateway ──▶ msvc-order ──Feign──▶ msvc-pro
                          OutboxPublisher ──▶ Kafka [order-events] ──▶ msvc-product
                                                                         │ 1 transacción: inbox + reserva de stock + outbox_event
                                                                         ▼
-msvc-order ◀── Kafka [stock-events] ◀── OutboxPublisher ◀───── StockReserved | StockRejected
-   │
-   └─▶ Order: CONFIRMED  (StockReserved)   o   REJECTED  (StockRejected = compensación)
+                         StockRejected ──▶ msvc-order: REJECTED                         (compensación 1)
+                         StockReserved ──▶ Kafka [stock-events] ──▶ msvc-payment
+                                                                        │ 1 transacción: inbox + pago + outbox_event
+                                                                        ▼
+msvc-order ◀──────────── Kafka [payment-events] ◀──── PaymentCompleted | PaymentFailed
+   │                                │
+   │                                └─▶ msvc-product (PaymentFailed): devuelve el stock reservado   (compensación 2)
+   └─▶ Order: CONFIRMED  (PaymentCompleted)   o   REJECTED  (PaymentFailed)
 ```
+
+Servicios y topics: `order` publica en `order-events`, `product` en `stock-events` y `payment` en `payment-events`. Cada fallo de consumo termina en `<topic>.DLT`.
 
 ### Infraestructura (antes de que llegue el pedido)
 
@@ -348,18 +356,29 @@ msvc-order ◀── Kafka [stock-events] ◀── OutboxPublisher ◀───
 - **Todo o nada**: si un ítem del pedido no tiene stock, se revierte la transacción completa (incluidos los descuentos de los otros ítems) y se registra el rechazo.
 - **Transactional Outbox** también aquí: `StockReserved` / `StockRejected` se escriben en el outbox de `product` y los publica su propio `OutboxPublisher` en `stock-events`.
 
-### Paso 3 · Cerrar la SAGA (`msvc-order`)
+- **Reservas persistidas** (`stock_reservation`): `product` guarda qué descontó para cada pedido. Es lo que hace posible compensar más tarde.
+- **Event-carried state transfer**: `StockReserved` lleva `userId` y el importe copiados del pedido, así `payment` cobra sin llamar a `order` (sin acoplamiento síncrono).
 
-- **SAGA coreografiada** (`OrderSagaService`, `StockEventsListener`): no hay un orquestador central; cada servicio reacciona a eventos del otro. `StockReserved` confirma el pedido.
-- **Compensación**: `StockRejected` deshace lo que `order` ya había hecho (el pedido pendiente pasa a `REJECTED`). La compensación es un evento de negocio, no un rollback de BD.
-- **Inbox** también en `order`, para que el cambio de estado sea idempotente.
+### Paso 3 · Cobrar (`msvc-payment`)
+
+- **Participante de la SAGA**: consume `StockReserved` y decide el cobro. El cobro es **simulado**: se rechaza todo importe mayor que `payment.max-amount` (1000 por defecto, en el repo `config`), para poder provocar el camino de fallo.
+- **Inbox + pago + outbox en una transacción**: se guarda el `eventId`, el registro `payments` (con `orderId` único: un pedido se cobra una vez) y `PaymentCompleted` o `PaymentFailed`.
+- Tiene su propio Postgres (`payments_db`), su outbox y el mismo manejo de errores con DLT que los demás.
+
+### Paso 4 · Cerrar la SAGA y compensar
+
+- **SAGA coreografiada** (`OrderSagaService`, `StockEventsListener`, `PaymentEventsListener`): no hay un orquestador central; cada servicio reacciona a eventos de los otros. Solo `PaymentCompleted` confirma el pedido: haber reservado stock no basta.
+- **Compensaciones encadenadas**: no se hace *rollback* de BD, cada servicio deshace lo suyo con un evento de negocio.
+  - `StockRejected` → `order` pasa el pedido a `REJECTED`.
+  - `PaymentFailed` → `order` pasa el pedido a `REJECTED` **y** `product` devuelve el stock reservado (`StockCompensationService`, `releaseStock`). Son dos reacciones independientes al mismo evento.
+- **Inbox** también en `order` y en la compensación de `product`, para que cada paso sea idempotente (devolver el stock dos veces sería tan grave como descontarlo dos veces).
 
 ### Fallos al consumir: Retry con backoff + Dead Letter Queue
 
 Ambos servicios (`KafkaErrorHandlingConfig`) tratan igual los errores de sus listeners:
 
 - **Retry con backoff exponencial**: ante un fallo transitorio (BD caída, timeout) se reintenta 4 veces, esperando 1 s, 2 s, 4 s y 8 s. Reintentar es seguro porque el consumidor es idempotente (inbox).
-- **Dead Letter Topic**: si se agotan los reintentos, el mensaje se publica en `order-events.DLT` (lo consume `product`) o `stock-events.DLT` (lo consume `order`) y el consumo continúa. Así **un mensaje venenoso no bloquea la partición**. La causa del error viaja en las cabeceras `kafka_dlt-*`.
+- **Dead Letter Topic**: si se agotan los reintentos, el mensaje se publica en `<topic>.DLT` (`order-events.DLT`, `stock-events.DLT` o `payment-events.DLT`) y el consumo continúa. Así **un mensaje venenoso no bloquea la partición**. La causa del error viaja en las cabeceras `kafka_dlt-*`.
 - **Fallos no recuperables** (JSON inválido) van directo al DLT, sin reintentos: reintentar no los arregla.
 - `DeadLetterListener` solo deja constancia en el log; no reprocesa. Corregir y reenviar es una decisión humana.
 
@@ -372,7 +391,6 @@ Ambos servicios (`KafkaErrorHandlingConfig`) tratan igual los errores de sus lis
 
 ### Pendiente (según el plan)
 
-- `msvc-payment` (`StockReserved → PaymentCompleted | PaymentFailed`) y compensaciones encadenadas (liberar stock si el pago falla).
 - Sustituir el polling por **CDC con Debezium** y comparar con **orquestación**.
 
 ## Project Structure
@@ -384,8 +402,9 @@ orders_system/
 ├── config-server/        # Spring Cloud Config Server
 ├── eureka-server/        # Service Discovery Server
 ├── msvc-order/          # Order Management Microservice
+├── msvc-payment/        # Payment Microservice (SAGA participant)
 ├── msvc-product/        # Product Management Microservice
-├── postgres-init/       # SQL run on first Postgres start (creates products_db)
+├── postgres-init/       # SQL run on first Postgres start (creates products_db and payments_db)
 ├── .gitignore
 ├── .dockerignore
 └── README.md

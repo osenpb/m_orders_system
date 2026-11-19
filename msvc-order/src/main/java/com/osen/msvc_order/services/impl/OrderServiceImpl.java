@@ -110,7 +110,8 @@ public class OrderServiceImpl implements OrderService {
 
     private OutboxEvent toOutboxEvent(Order order) {
         UUID eventId = UUID.randomUUID();
-        OrderCreatedEvent event = new OrderCreatedEvent(eventId, order.getId(), order.getUserId(), Instant.now(),
+        OrderCreatedEvent event = new OrderCreatedEvent(eventId, order.getId(), order.getUserId(), order.getTotal(),
+                Instant.now(),
                 order.getItems().stream()
                         .map(i -> new OrderCreatedEvent.Item(i.getProductId(), i.getQuantity()))
                         .toList());

@@ -134,6 +134,20 @@ services:
       - eureka-server
       - postgres
       - kafka
+  msvc-payment:
+    build: ./msvc-payment
+    container_name: msvc-payment
+    environment:
+      - JAVA_OPTS=-Xms32m -Xmx128m
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+    ports:
+      - "8083:8083"
+    depends_on:
+      - config-server
+      - eureka-server
+      - postgres
+      - kafka
 
 volumes:
   keycloak_pgdata:

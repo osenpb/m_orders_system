@@ -9,6 +9,7 @@ public record OrderCreatedEvent(
         UUID eventId,
         Long orderId,
         String userId,
+        Double total,
         Instant occurredAt,
         List<Item> items) {
 

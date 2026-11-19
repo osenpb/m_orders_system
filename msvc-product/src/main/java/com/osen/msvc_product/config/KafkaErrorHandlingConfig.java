@@ -28,9 +28,16 @@ public class KafkaErrorHandlingConfig {
 
     public static final String ORDER_EVENTS_DLT = "order-events.DLT";
 
+    public static final String PAYMENT_EVENTS_DLT = "payment-events.DLT";
+
     @Bean
     NewTopic orderEventsDlt() {
         return TopicBuilder.name(ORDER_EVENTS_DLT).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    NewTopic paymentEventsDlt() {
+        return TopicBuilder.name(PAYMENT_EVENTS_DLT).partitions(1).replicas(1).build();
     }
 
     @Bean

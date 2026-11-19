@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -18,6 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * El tipo del evento viaja en la cabecera eventType.
  */
 @Component
+@Lazy(false)
 public class OutboxPublisher {
 
     public static final String STOCK_EVENTS_TOPIC = "stock-events";

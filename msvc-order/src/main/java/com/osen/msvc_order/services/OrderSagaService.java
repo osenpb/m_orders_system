@@ -34,8 +34,15 @@ public class OrderSagaService {
         this.tx = tx;
     }
 
-    public void onStockReserved(UUID eventId, Long orderId) {
+    /** Ultimo paso feliz de la SAGA: stock reservado Y pago completado. */
+    public void onPaymentCompleted(UUID eventId, Long orderId) {
         transition(eventId, orderId, OrderStatus.CONFIRMED);
+    }
+
+    /** El pago fallo: se rechaza el pedido (product libera el stock por su cuenta). */
+    public void onPaymentFailed(UUID eventId, Long orderId, String reason) {
+        log.info("Pedido {} rechazado por payment: {}", orderId, reason);
+        transition(eventId, orderId, OrderStatus.REJECTED);
     }
 
     public void onStockRejected(UUID eventId, Long orderId, String reason) {

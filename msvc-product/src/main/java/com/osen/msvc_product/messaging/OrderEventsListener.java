@@ -7,6 +7,7 @@ import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -15,6 +16,7 @@ import com.osen.msvc_product.events.OrderCreatedEvent;
 import com.osen.msvc_product.service.StockReservationService;
 
 @Component
+@Lazy(false)
 public class OrderEventsListener {
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventsListener.class);

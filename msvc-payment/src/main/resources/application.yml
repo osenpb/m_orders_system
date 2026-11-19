@@ -1,0 +1,8 @@
+server:
+  port: ${SERVER_PORT:8083}
+
+spring:
+  application:
+    name: msvc-payment
+  config:
+    import: "${SPRING_CONFIG_IMPORT:optional:configserver:http://localhost:8888}"

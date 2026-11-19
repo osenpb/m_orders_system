@@ -6,6 +6,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ import com.osen.msvc_order.events.StockReservedEvent;
 import com.osen.msvc_order.services.OrderSagaService;
 
 @Component
+@Lazy(false)
 public class StockEventsListener {
 
     private static final Logger log = LoggerFactory.getLogger(StockEventsListener.class);
@@ -33,10 +35,9 @@ public class StockEventsListener {
         Header typeHeader = record.headers().lastHeader("eventType");
         String type = typeHeader == null ? "" : new String(typeHeader.value(), StandardCharsets.UTF_8);
         switch (type) {
-            case StockReservedEvent.TYPE -> {
-                StockReservedEvent e = objectMapper.readValue(record.value(), StockReservedEvent.class);
-                orderSagaService.onStockReserved(e.eventId(), e.orderId());
-            }
+            // el stock reservado ya no confirma el pedido: falta el pago (payment-events)
+            case StockReservedEvent.TYPE -> log.debug("Stock reservado para el pedido {}, esperando el pago",
+                    record.key());
             case StockRejectedEvent.TYPE -> {
                 StockRejectedEvent e = objectMapper.readValue(record.value(), StockRejectedEvent.class);
                 orderSagaService.onStockRejected(e.eventId(), e.orderId(), e.reason());

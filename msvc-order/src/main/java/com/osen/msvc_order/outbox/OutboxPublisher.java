@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -21,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Pensado para una sola instancia de msvc-order.
  */
 @Component
+@Lazy(false)
 public class OutboxPublisher {
 
     public static final String ORDER_EVENTS_TOPIC = "order-events";

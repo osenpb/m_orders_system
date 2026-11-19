@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import com.osen.msvc_order.config.KafkaErrorHandlingConfig;
@@ -17,14 +18,18 @@ import com.osen.msvc_order.config.KafkaErrorHandlingConfig;
  * corregir y reenviar el mensaje. Aqui solo se deja constancia en el log.
  */
 @Component
+@Lazy(false)
 public class DeadLetterListener {
 
     private static final Logger log = LoggerFactory.getLogger(DeadLetterListener.class);
 
-    @KafkaListener(topics = KafkaErrorHandlingConfig.STOCK_EVENTS_DLT, groupId = "msvc-order-dlt")
+    // stock-events.DLT es compartido: aqui tambien caen los fallos de msvc-payment (ver el grupo en el log)
+    @KafkaListener(topics = { KafkaErrorHandlingConfig.STOCK_EVENTS_DLT,
+            KafkaErrorHandlingConfig.PAYMENT_EVENTS_DLT }, groupId = "msvc-order-dlt")
     public void onDeadLetter(ConsumerRecord<String, String> record) {
-        log.error("Mensaje en {} (clave={}, origen={}): {} | payload={}", record.topic(), record.key(),
+        log.error("Mensaje en {} (clave={}, origen={}, grupo={}): {} | payload={}", record.topic(), record.key(),
                 header(record, KafkaHeaders.DLT_ORIGINAL_TOPIC),
+                header(record, KafkaHeaders.DLT_ORIGINAL_CONSUMER_GROUP),
                 header(record, KafkaHeaders.DLT_EXCEPTION_MESSAGE), record.value());
     }
 

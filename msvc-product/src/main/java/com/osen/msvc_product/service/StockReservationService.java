@@ -11,6 +11,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.osen.msvc_product.entity.StockReservation;
+import com.osen.msvc_product.repository.StockReservationRepository;
 import com.osen.msvc_product.events.OrderCreatedEvent;
 import com.osen.msvc_product.events.StockRejectedEvent;
 import com.osen.msvc_product.events.StockReservedEvent;
@@ -36,12 +38,15 @@ public class StockReservationService {
     private final ProductRepository productRepository;
     private final ProcessedEventRepository processedEventRepository;
     private final OutboxRepository outboxRepository;
+    private final StockReservationRepository stockReservationRepository;
     private final TransactionTemplate tx;
     private final ObjectMapper objectMapper;
 
     public StockReservationService(ProductRepository productRepository,
             ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository,
-            TransactionTemplate tx, ObjectMapper objectMapper) {
+            StockReservationRepository stockReservationRepository, TransactionTemplate tx,
+            ObjectMapper objectMapper) {
+        this.stockReservationRepository = stockReservationRepository;
         this.productRepository = productRepository;
         this.processedEventRepository = processedEventRepository;
         this.outboxRepository = outboxRepository;
@@ -63,9 +68,13 @@ public class StockReservationService {
                             // lanzar revierte los descuentos ya hechos a otros items del pedido
                             throw new InsufficientStockException(item.productId());
                         }
+                        // se guarda lo reservado: es lo que se devuelve si el pago falla
+                        stockReservationRepository.save(
+                                new StockReservation(event.orderId(), item.productId(), item.quantity()));
                     }
                     outboxRepository.save(toOutbox(StockReservedEvent.TYPE, event.orderId(),
-                            new StockReservedEvent(UUID.randomUUID(), event.orderId(), Instant.now())));
+                            new StockReservedEvent(UUID.randomUUID(), event.orderId(), event.userId(),
+                                    event.total(), Instant.now())));
                 });
                 log.info("Stock reservado para el pedido {}", event.orderId());
             } catch (InsufficientStockException e) {
