@@ -55,7 +55,7 @@ Central routing and security layer providing:
 Service registry for microservices:
 - Service registration
 - Service discovery
-- Health monitoring
+- Health monitoring (wip)
 
 #### Config Server
 Centralized configuration management:
