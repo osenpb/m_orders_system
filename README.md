@@ -389,6 +389,12 @@ Ambos servicios (`KafkaErrorHandlingConfig`) tratan igual los errores de sus lis
 - El outbox no se purga: los eventos publicados se quedan en la tabla.
 - Las tablas se crean con `ddl-auto: update`, no con migraciones (Flyway).
 
+### Pruebas
+
+- Tests de integración con Testcontainers (Postgres y Kafka efímeros): `mvn test -Dtest='*IT'` dentro de `msvc-product`, `msvc-payment` o `msvc-order`. Cubren duplicados, compensación de stock, DLT y outbox.
+- Flujo completo probado a mano: pedido normal → `CONFIRMED`; importe > 1000 → `REJECTED` con el stock devuelto; sin stock → `REJECTED`; `payment` caído → el pedido espera en `PENDING` y se confirma al volver.
+- Sin probar: matar el publisher entre publicar y marcar `published_at`, y el `docker compose` completo con Keycloak y gateway.
+
 ### Pendiente (según el plan)
 
 - Sustituir el polling por **CDC con Debezium** y comparar con **orquestación**.
