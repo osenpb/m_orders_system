@@ -1,481 +1,92 @@
 # Orders System Microservices
 
-A distributed microservices architecture for managing products and orders, built with Spring Boot, Spring Cloud, and following best practices for cloud-native applications.
+A Spring Boot / Spring Cloud microservices system for products and orders. Its main goal is to practice the **Transactional Outbox** and **SAGA** patterns on top of Kafka.
 
-**Note:** `docker-compose.yml` provisions the whole stack: Keycloak (with its own Postgres), Zipkin, PostgreSQL (`orders_db` and `products_db`), Kafka (single-node KRaft) and all the services. The goal of the project is to practice the **Outbox** and **SAGA** patterns (see [Patrones de diseño en el flujo del proyecto](#patrones-de-diseño-en-el-flujo-del-proyecto)).
+## Services
 
-## Architecture
+| Service | Port | Role |
+|---------|------|------|
+| `api-gateway` | 8080 | Single entry point, OAuth2 (Keycloak) |
+| `eureka-server` | 8761 | Service discovery |
+| `config-server` | 8888 | Centralized configuration (Git repo in `config/`) |
+| `msvc-product` | 8081 | Product catalog and stock |
+| `msvc-order` | 8082 | Orders, SAGA entry and exit point |
+| `msvc-payment` | 8083 | Simulated payments, SAGA participant (no REST API) |
 
-This system implements a microservices architecture with the following components:
+**Stack:** Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL, Kafka (KRaft), Resilience4j, Keycloak, Micrometer Tracing + Zipkin, Maven, Docker.
 
-- **API Gateway** - Single entry point for all client requests, routing and load balancing
-- **Eureka Server** - Service discovery and registration
-- **Config Server** - Centralized configuration management
-- **Product Service** - Manages product catalog and inventory
-- **Order Service** - Handles order processing and management
+## Patterns and the flow they cover
 
-## Services Overview
+### Infrastructure patterns (before a request reaches business logic)
 
-### Services & Ports
+| Pattern | Where | What it does |
+|---------|-------|--------------|
+| **API Gateway + Token Relay** | `api-gateway` | Routes requests and forwards the Keycloak JWT to the services. |
+| **Service Discovery** | `eureka-server`, `@FeignClient("msvc-product")` | Services find each other by name, no hardcoded hosts. |
+| **Externalized Configuration** | `config-server` | DB, Kafka and breaker settings live outside the services, per profile. |
+| **Database per Service** | `orders_db`, `products_db`, `payments_db` | Each service owns its data; communication is only via API or events. |
 
-| Service | Port | Description |
-|---------|------|-------------|
-| Eureka Server | 8761 | Service Discovery Server |
-| Config Server | 8888 | Configuration Management Server |
-| API Gateway | 8080 | API Gateway with OAuth2 |
-| Product Service | 8081 | Product Management Service |
-| Order Service | 8082 | Order Management Service |
-| Payment Service | 8083 | Payment (simulated), SAGA participant; no REST API |
+### Order flow (SAGA)
 
-### Microservices
-
-#### Product Service (`msvc-product`)
-Manages product catalog with CRUD operations for products including:
-- Product listing and retrieval
-- Product creation and updates
-- Stock management
-- Product pricing
-
-#### Order Service (`msvc-order`)
-Handles order processing with features including:
-- Order creation and management
-- Order item management
-- Automatic total calculation
-- Integration with Product Service via OpenFeign
-- Circuit breaker pattern with Resilience4j
-
-#### API Gateway
-Central routing and security layer providing:
-- Request routing to microservices
-- OAuth2 token relay for authentication
-- Load balancing
-- Service discovery integration
-
-#### Eureka Server
-Service registry for microservices:
-- Service registration
-- Service discovery
-- Health monitoring (wip)
-
-#### Config Server
-Centralized configuration management:
-- Externalized configuration from Git repository
-- Environment-specific configurations
-- Dynamic configuration updates
-
-## Tech Stack
-
-- **Java 21**
-- **Spring Boot 3.5.10**
-- **Spring Cloud 2025.0.1**
-- **Spring Cloud Gateway**
-- **Spring Cloud Netflix Eureka**
-- **Spring Cloud Config**
-- **Spring Cloud OpenFeign**
-- **Spring Data JPA**
-- **PostgreSQL**
-- **Apache Kafka** - Event messaging (Outbox + SAGA)
-- **Resilience4j** - Circuit breaker pattern
-- **Keycloak** - OAuth2/OIDC authentication
-- **Micrometer Tracing** - Distributed tracing with OpenTelemetry
-- **Zipkin** - Tracing visualization
-- **Lombok**
-- **Maven**
-- **Docker**
-
-## Prerequisites
-
-Before running this application, ensure you have:
-
-- Java 21 installed
-- Maven 3.9+
-- PostgreSQL 16 running on localhost:5432 (databases `orders_db` and `products_db`)
-- Kafka running on localhost:29092 (both are provided by `docker compose up postgres kafka`)
-- Keycloak server running on localhost:7080 (realm: order-system)
-- Zipkin server running on localhost:9411 (optional, for tracing)
-- Git (for config server)
-
-## Setup
-
-### Database Setup
-
-Each service owns its own database. With Docker, `docker compose up postgres` creates `orders_db` and, through `postgres-init/`, `products_db` (the init script only runs when the volume is empty). Without Docker:
-
-```sql
-CREATE DATABASE orders_db;
-CREATE DATABASE products_db;
+```
+Client -> Gateway -> msvc-order --Feign--> msvc-product        (validate product and price)
+                        |
+                        | 1 TX: Order(PENDING) + outbox(OrderCreated)
+                        v
+                  Outbox publisher -> [order-events] -> msvc-product
+                                                           | 1 TX: inbox + reserve stock + outbox
+                        StockRejected -> order: REJECTED   | (compensation 1)
+                        StockReserved -> [stock-events] -> msvc-payment
+                                                           | 1 TX: inbox + payment + outbox
+msvc-order <- [payment-events] <- PaymentCompleted | PaymentFailed
+   |                                   '-> msvc-product (PaymentFailed): release stock (compensation 2)
+   '-> CONFIRMED (PaymentCompleted) or REJECTED (PaymentFailed)
 ```
 
-Default credentials (override with `DB_USER` / `DB_PASSWORD`):
-- Username: `postgres`
-- Password: `postgres`
+| Step | Pattern | Behavior |
+|------|---------|----------|
+| 1. Create order (`msvc-order`) | **Circuit Breaker** (Resilience4j) | Protects the synchronous call to product: 422 if the product does not exist, 503 if product is down. No fake fallback data. |
+| | **Server-side pricing** | Price always comes from product, never from the client. |
+| | **Transactional Outbox** | Order and `OrderCreated` event are saved in the same transaction, so there is no DB-vs-Kafka dual write. |
+| | **Polling Publisher** | A scheduled job publishes unsent outbox events, keyed by `orderId` to keep per-order ordering. |
+| 2. Reserve stock (`msvc-product`) | **Idempotent Consumer (Inbox)** | The event id is stored in the same transaction as the stock change, so redelivered events are ignored. |
+| | **Atomic conditional update** | `UPDATE ... SET stock = stock - :q WHERE stock >= :q` avoids race conditions; all-or-nothing per order. |
+| | **Event-carried state transfer** | `StockReserved` carries user and amount, so payment never calls order synchronously. |
+| 3. Charge (`msvc-payment`) | **SAGA participant** | Simulated charge; amounts above `payment.max-amount` (default 1000) fail, to exercise the failure path. One payment per order. |
+| 4. Close and compensate | **Choreographed SAGA** | No central orchestrator; each service reacts to events. Only `PaymentCompleted` confirms the order. |
+| | **Compensating transactions** | `StockRejected` -> order `REJECTED`. `PaymentFailed` -> order `REJECTED` and product releases the reserved stock. |
+| Any consumer | **Retry with backoff + Dead Letter Topic** | 4 retries (1s, 2s, 4s, 8s), then the message goes to `<topic>.DLT`; non-recoverable errors go straight to the DLT. |
 
-### Keycloak Setup
+Delivery is at-least-once, and idempotent consumers make the effect exactly-once on stock and order state.
 
-Ensure Keycloak is running with the following configuration:
-- Realm: `order-system`
-- Client: `api-gateway-client`
-- Client Secret: `zUcCDu9kNswZAUMaCuaPIS3J2PPkaQOE`
-- Scopes: `openid`, `profile`, `email`, `roles`
+## Running
 
-### Build the Project
-
-Navigate to each microservice and build:
+Requirements: Java 21, Maven 3.9+, Docker.
 
 ```bash
-# Build all services
-mvn clean install
-
-# Or build individual services
-cd msvc-product && mvn clean install
-cd ../msvc-order && mvn clean install
-cd ../api-gateway && mvn clean install
-cd ../eureka-server && mvn clean install
-cd ../config-server && mvn clean install
+docker compose up -d        # Keycloak, Zipkin, Postgres, Kafka and all services
 ```
 
-## Running the Application
+For local development, start only the infrastructure (`docker compose up -d postgres kafka keycloak zipkin`), then run `mvn spring-boot:run` in this order: `eureka-server`, `config-server`, `msvc-product`, `msvc-order`, `msvc-payment`, `api-gateway`. Check registration at http://localhost:8761.
 
-### Start Services in Order
+Configure Keycloak (realm `order-system`, client `api-gateway-client`) and keep secrets in `.env`, not in the repo.
 
-1. **Start Eureka Server** (Service Discovery)
-   ```bash
-   cd eureka-server
-   mvn spring-boot:run
-   ```
-   Access: http://localhost:8761
+### API (through the gateway, `http://localhost:8080`)
 
-2. **Start Config Server** (Configuration Management)
-   ```bash
-   cd config-server
-   mvn spring-boot:run
-   ```
-   Access: http://localhost:8888
+- `/api/products` - `GET`, `POST`; `/api/products/{id}` - `GET`, `PUT`, `DELETE`
+- `/api/orders` - `GET`, `POST`; `/api/orders/{id}` - `GET`, `PUT`, `DELETE`
 
-3. **Start Product Service**
-   ```bash
-   cd msvc-product
-   mvn spring-boot:run
-   ```
-   Access: http://localhost:8081
+Order status: `PENDING` -> `CONFIRMED` | `REJECTED`.
 
-4. **Start Order Service**
-   ```bash
-   cd msvc-order
-   mvn spring-boot:run
-   ```
-   Access: http://localhost:8082
-
-5. **Start API Gateway** (Last)
-   ```bash
-   cd api-gateway
-   mvn spring-boot:run
-   ```
-   Access: http://localhost:8080
-
-### Verify Services
-
-Check Eureka Dashboard to ensure all services are registered:
-- Open http://localhost:8761
-- All services (config-server, msvc-product, msvc-order, api-gateway) should be listed
-
-## API Endpoints
-
-### Via API Gateway (Recommended)
-
-All requests should go through the API Gateway for authentication and routing:
-
-#### Products
-- `GET http://localhost:8080/api/products` - List all products
-- `GET http://localhost:8080/api/products/{id}` - Get product by ID
-- `POST http://localhost:8080/api/products` - Create new product
-- `PUT http://localhost:8080/api/products/{id}` - Update product
-- `DELETE http://localhost:8080/api/products/{id}` - Delete product
-
-#### Orders
-- `GET http://localhost:8080/api/orders` - List all orders
-- `GET http://localhost:8080/api/orders/{id}` - Get order by ID
-- `POST http://localhost:8080/api/orders` - Create new order
-- `PUT http://localhost:8080/api/orders/{id}` - Update order
-- `DELETE http://localhost:8080/api/orders/{id}` - Delete order
-
-### Direct Access (Without Authentication)
-
-#### Product Service (Port 8081)
-- `GET http://localhost:8081/api/products` - List all products
-- `GET http://localhost:8081/api/products/{id}` - Get product by ID
-- `POST http://localhost:8081/api/products` - Create new product
-- `PUT http://localhost:8081/api/products/{id}` - Update product
-- `DELETE http://localhost:8081/api/products/{id}` - Delete product
-
-#### Order Service (Port 8082)
-- `GET http://localhost:8082/api/orders` - List all orders
-- `GET http://localhost:8082/api/orders/{id}` - Get order by ID
-- `POST http://localhost:8082/api/orders` - Create new order
-- `PUT http://localhost:8082/api/orders/{id}` - Update order
-- `DELETE http://localhost:8082/api/orders/{id}` - Delete order
-
-## Configuration
-
-### Centralized Configuration
-
-All microservices fetch configuration from the Config Server:
-- Product Service: `msvc-product.yml`
-- Order Service: `msvc-order.yml`
-- API Gateway: `api-gateway.yml`
-- Common configuration: `application.yml`
-
-Configuration files are stored in a Git repository:
-```
-https://github.com/osenpb/config-server-order-system.git
-```
-
-### Environment Variables
-
-You can override configuration using environment variables:
-- `SERVER_PORT` - Server port
-- `SPRING_APPLICATION_NAME` - Application name
-- `EUREKA_INSTANCE_HOSTNAME` - Eureka instance hostname
-- `SPRING_DATASOURCE_URL` - Database URL
-- `SPRING_DATASOURCE_USERNAME` - Database username
-- `SPRING_DATASOURCE_PASSWORD` - Database password
-
-## Docker Deployment
-
-Each microservice includes a Dockerfile for containerization:
-
-### Build Docker Images
+### Tests
 
 ```bash
-# Build all services
-for service in eureka-server config-server msvc-product msvc-order api-gateway; do
-  cd $service
-  docker build -t orders-system/$service:latest .
-  cd ..
-done
+mvn test -Dtest='*IT'   # inside msvc-product, msvc-payment or msvc-order (Testcontainers)
 ```
 
-### Run with Docker
+## Current limits
 
-```bash
-# Run each service
-docker run -p 8761:8761 orders-system/eureka-server:latest
-docker run -p 8888:8888 orders-system/config-server:latest
-docker run -p 8081:8081 orders-system/msvc-product:latest
-docker run -p 8082:8082 orders-system/msvc-order:latest
-docker run -p 8080:8080 orders-system/api-gateway:latest
-```
-
-## Monitoring & Tracing
-
-### Distributed Tracing
-
-The system uses Micrometer Tracing with OpenTelemetry and Zipkin:
-
-- Zipkin Server: http://localhost:9411
-- Tracing probability: 100% (configurable in `application.yml`)
-
-### Actuator Endpoints
-
-Each service exposes Spring Boot Actuator endpoints:
-- `/actuator/health` - Service health status
-- `/actuator/info` - Service information
-- `/actuator/tracing` - Tracing information
-
-## Security
-
-### Authentication & Authorization
-
-The system uses OAuth2/OIDC with Keycloak:
-- Authentication is handled at the API Gateway level
-- Token Relay pattern propagates tokens to microservices
-- Microservices act as OAuth2 Resource Servers
-
-### Security Configuration
-
-- API Gateway uses `spring-boot-starter-oauth2-client` for authentication
-- Microservices use `spring-boot-starter-oauth2-resource-server` for token validation
-- JWT tokens validated against Keycloak issuer URI
-
-## Resilience Patterns
-
-### Circuit Breaker
-
-The Order Service implements the Circuit Breaker pattern using Resilience4j:
-- Configured for `productCB` instance (Product Service calls)
-- Sliding window size: 10 calls
-- Failure rate threshold: 50%
-- Wait duration in open state: 5 seconds
-- Permitted calls in half-open state: 3
-
-## Patrones de diseño en el flujo del proyecto
-
-El proyecto sirve para practicar **outbox y SAGA**. Este es el recorrido de un pedido y el patrón que actúa en cada paso (resumen; los detalles están en el código).
-
-```
-Cliente ──▶ API Gateway ──▶ msvc-order ──Feign──▶ msvc-product      (validar producto y precio)
-                               │
-                               │ 1 transacción: Order(PENDING) + outbox_event(OrderCreated)
-                               ▼
-                         OutboxPublisher ──▶ Kafka [order-events] ──▶ msvc-product
-                                                                        │ 1 transacción: inbox + reserva de stock + outbox_event
-                                                                        ▼
-                         StockRejected ──▶ msvc-order: REJECTED                         (compensación 1)
-                         StockReserved ──▶ Kafka [stock-events] ──▶ msvc-payment
-                                                                        │ 1 transacción: inbox + pago + outbox_event
-                                                                        ▼
-msvc-order ◀──────────── Kafka [payment-events] ◀──── PaymentCompleted | PaymentFailed
-   │                                │
-   │                                └─▶ msvc-product (PaymentFailed): devuelve el stock reservado   (compensación 2)
-   └─▶ Order: CONFIRMED  (PaymentCompleted)   o   REJECTED  (PaymentFailed)
-```
-
-Servicios y topics: `order` publica en `order-events`, `product` en `stock-events` y `payment` en `payment-events`. Cada fallo de consumo termina en `<topic>.DLT`.
-
-### Infraestructura (antes de que llegue el pedido)
-
-| Patrón | Dónde actúa | Para qué |
-|--------|-------------|----------|
-| **API Gateway + Token Relay** | `api-gateway` | Punto de entrada único: enruta y propaga el JWT de Keycloak a los servicios. |
-| **Service Discovery** | `eureka-server`, `@FeignClient(name = "msvc-product")` | `order` encuentra a `product` por nombre, sin IPs fijas. |
-| **Externalized Configuration** | `config-server` + repo `config` | La configuración (BD, Kafka, circuit breaker) vive fuera de los servicios, por perfil (`docker`). |
-| **Database per Service** | `orders_db` y `products_db` | Cada servicio es dueño de sus datos; solo se comunican por API o eventos. Sin esto la SAGA no tiene sentido. |
-
-### Paso 1 · Crear el pedido (`msvc-order`)
-
-- **Circuit Breaker** (`ProductGateway`, instancia `productCB`): protege la consulta síncrona a `product`. No hay *fallback* con datos inventados: si el producto no existe responde 422 (y no cuenta como fallo del breaker) y si `product` no responde, 503. El breaker vive en su propio bean para que pase por el proxy de Spring.
-- **Server-side pricing**: el precio se toma de `product`, nunca de la petición del cliente.
-- **Transactional Outbox** (`OutboxEvent`, `createNewOrder`): el pedido y el evento `OrderCreated` se guardan **en la misma transacción**. Resuelve el problema de "guardé en la BD pero no pude publicar en Kafka" (escritura doble). Nunca se publica directo a Kafka desde la lógica de negocio.
-- **Polling Publisher** (`OutboxPublisher`): un `@Scheduled` lee los eventos sin publicar, los envía y marca `publishedAt`. La clave del mensaje es el `orderId`, así que los eventos de un mismo pedido llegan en orden (misma partición). Si Kafka cae, el lote se corta y se reintenta sin desordenar.
-- **Estado como máquina simple**: el pedido nace `PENDING` y solo transiciona a `CONFIRMED` o `REJECTED` desde `PENDING`.
-
-### Paso 2 · Reservar stock (`msvc-product`)
-
-- **Idempotent Consumer / Inbox** (`processed_events`): Kafka entrega **al menos una vez**, así que el mismo evento puede llegar dos veces. El `eventId` se inserta en la inbox **en la misma transacción** que el descuento de stock; la clave primaria impide el duplicado.
-- **Atomic conditional update** (`ProductRepository.reserveStock`): `UPDATE ... SET stock = stock - :q WHERE stock >= :q`. Evita la carrera de leer-comprobar-escribir cuando dos reservas llegan a la vez.
-- **Todo o nada**: si un ítem del pedido no tiene stock, se revierte la transacción completa (incluidos los descuentos de los otros ítems) y se registra el rechazo.
-- **Transactional Outbox** también aquí: `StockReserved` / `StockRejected` se escriben en el outbox de `product` y los publica su propio `OutboxPublisher` en `stock-events`.
-
-- **Reservas persistidas** (`stock_reservation`): `product` guarda qué descontó para cada pedido. Es lo que hace posible compensar más tarde.
-- **Event-carried state transfer**: `StockReserved` lleva `userId` y el importe copiados del pedido, así `payment` cobra sin llamar a `order` (sin acoplamiento síncrono).
-
-### Paso 3 · Cobrar (`msvc-payment`)
-
-- **Participante de la SAGA**: consume `StockReserved` y decide el cobro. El cobro es **simulado**: se rechaza todo importe mayor que `payment.max-amount` (1000 por defecto, en el repo `config`), para poder provocar el camino de fallo.
-- **Inbox + pago + outbox en una transacción**: se guarda el `eventId`, el registro `payments` (con `orderId` único: un pedido se cobra una vez) y `PaymentCompleted` o `PaymentFailed`.
-- Tiene su propio Postgres (`payments_db`), su outbox y el mismo manejo de errores con DLT que los demás.
-
-### Paso 4 · Cerrar la SAGA y compensar
-
-- **SAGA coreografiada** (`OrderSagaService`, `StockEventsListener`, `PaymentEventsListener`): no hay un orquestador central; cada servicio reacciona a eventos de los otros. Solo `PaymentCompleted` confirma el pedido: haber reservado stock no basta.
-- **Compensaciones encadenadas**: no se hace *rollback* de BD, cada servicio deshace lo suyo con un evento de negocio.
-  - `StockRejected` → `order` pasa el pedido a `REJECTED`.
-  - `PaymentFailed` → `order` pasa el pedido a `REJECTED` **y** `product` devuelve el stock reservado (`StockCompensationService`, `releaseStock`). Son dos reacciones independientes al mismo evento.
-- **Inbox** también en `order` y en la compensación de `product`, para que cada paso sea idempotente (devolver el stock dos veces sería tan grave como descontarlo dos veces).
-
-### Fallos al consumir: Retry con backoff + Dead Letter Queue
-
-Ambos servicios (`KafkaErrorHandlingConfig`) tratan igual los errores de sus listeners:
-
-- **Retry con backoff exponencial**: ante un fallo transitorio (BD caída, timeout) se reintenta 4 veces, esperando 1 s, 2 s, 4 s y 8 s. Reintentar es seguro porque el consumidor es idempotente (inbox).
-- **Dead Letter Topic**: si se agotan los reintentos, el mensaje se publica en `<topic>.DLT` (`order-events.DLT`, `stock-events.DLT` o `payment-events.DLT`) y el consumo continúa. Así **un mensaje venenoso no bloquea la partición**. La causa del error viaja en las cabeceras `kafka_dlt-*`.
-- **Fallos no recuperables** (JSON inválido) van directo al DLT, sin reintentos: reintentar no los arregla.
-- `DeadLetterListener` solo deja constancia en el log; no reprocesa. Corregir y reenviar es una decisión humana.
-
-### Garantías y límites actuales
-
-- Entrega **al menos una vez** + consumidores idempotentes = efecto **exactamente una vez** sobre el stock y el estado del pedido.
-- `OutboxPublisher` está pensado para **una sola instancia** de cada servicio (con varias réplicas habría que bloquear el lote, p. ej. `FOR UPDATE SKIP LOCKED`).
-- El outbox no se purga: los eventos publicados se quedan en la tabla.
-- Las tablas se crean con `ddl-auto: update`, no con migraciones (Flyway).
-
-### Pruebas
-
-- Tests de integración con Testcontainers (Postgres y Kafka efímeros): `mvn test -Dtest='*IT'` dentro de `msvc-product`, `msvc-payment` o `msvc-order`. Cubren duplicados, compensación de stock, DLT y outbox.
-- Flujo completo probado a mano: pedido normal → `CONFIRMED`; importe > 1000 → `REJECTED` con el stock devuelto; sin stock → `REJECTED`; `payment` caído → el pedido espera en `PENDING` y se confirma al volver.
-- Sin probar: matar el publisher entre publicar y marcar `published_at`, y el `docker compose` completo con Keycloak y gateway.
-
-### Pendiente (según el plan)
-
-- Sustituir el polling por **CDC con Debezium** y comparar con **orquestación**.
-
-## Project Structure
-
-```
-orders_system/
-├── api-gateway/          # API Gateway service
-├── config/               # Configuration files for config-server
-├── config-server/        # Spring Cloud Config Server
-├── eureka-server/        # Service Discovery Server
-├── msvc-order/          # Order Management Microservice
-├── msvc-payment/        # Payment Microservice (SAGA participant)
-├── msvc-product/        # Product Management Microservice
-├── postgres-init/       # SQL run on first Postgres start (creates products_db and payments_db)
-├── .gitignore
-├── .dockerignore
-└── README.md
-```
-
-## Data Models
-
-### Product
-- `id` - Long (auto-generated)
-- `name` - String
-- `stock` - Integer
-- `price` - Double
-
-### Order
-- `id` - Long (auto-generated)
-- `userId` - String
-- `status` - `PENDING` (default), `CONFIRMED`, `REJECTED`, `CANCELLED`
-- `total` - Double (auto-calculated from prices taken from Product Service)
-- `items` - List<OrderItem>
-
-### OrderItem
-- `id` - Long (auto-generated)
-- `productId` - Long
-- `name` - String
-- `price` - Double
-- `quantity` - Integer
-- `order` - Order (relationship)
-
-## Troubleshooting
-
-### Common Issues
-
-**Services not registering with Eureka:**
-- Ensure Eureka Server is running first
-- Check application names in configuration
-- Verify `eureka.client.service-url.defaultZone` is correct
-
-**Config Server not loading configurations:**
-- Verify Git repository is accessible
-- Check branch and file names in Git
-- Review Config Server logs for errors
-
-**Database connection errors:**
-- Ensure PostgreSQL is running and `orders_db` / `products_db` exist
-- Verify database credentials
-- Check database URL in configuration
-
-**API Gateway routing issues:**
-- Verify service names in route configuration
-- Check that microservices are registered in Eureka
-- Review Gateway logs for routing errors
-
-## Development
-
-### Code Style
-- Project uses Lombok to reduce boilerplate code
-- Follow Spring Boot conventions
-- RESTful API design principles
-
-### Adding New Microservices
-1. Create new Spring Boot project with required dependencies
-2. Add Eureka Client dependency
-3. Add Config Client dependency
-4. Configure service in Config Server
-5. Add route in API Gateway
-6. Start service after Eureka and Config Server
-
-
+- Each outbox publisher assumes a single instance (multiple replicas would need `FOR UPDATE SKIP LOCKED`).
+- Published outbox events are never purged.
+- Schemas use `ddl-auto: update`, not Flyway migrations.
+- Planned: replace polling with CDC (Debezium) and compare with orchestration.
